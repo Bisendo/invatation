@@ -16,8 +16,6 @@ const BusinessPhotoEditor = () => {
     hueRotate: 0,
     invert: 0,
     sharpen: 0,
-    exposure: 0,
-    temperature: 0,
   });
   const [isDragging, setIsDragging] = useState(false);
   const [zoom, setZoom] = useState(100);
@@ -25,65 +23,43 @@ const BusinessPhotoEditor = () => {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [showBeforeAfter, setShowBeforeAfter] = useState(false);
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
-  const [selectedRatio, setSelectedRatio] = useState('free');
-  const [showCropOverlay, setShowCropOverlay] = useState(false);
-  const [cropStart, setCropStart] = useState(null);
-  const [cropRect, setCropRect] = useState(null);
   
   const canvasRef = useRef(null);
-  const previewCanvasRef = useRef(null);
   const imageRef = useRef(null);
   const fileInputRef = useRef(null);
   const containerRef = useRef(null);
 
   // Save state to history
-  const saveToHistory = useCallback((newState) => {
+  const saveToHistory = useCallback((adjustmentsState, zoomState, filterState) => {
     setHistory(prev => {
       const newHistory = prev.slice(0, historyIndex + 1);
-      newHistory.push({ ...newState });
+      newHistory.push({ 
+        adjustments: { ...adjustmentsState }, 
+        zoom: zoomState, 
+        activeFilter: filterState 
+      });
       setHistoryIndex(newHistory.length - 1);
       return newHistory;
     });
   }, [historyIndex]);
 
-  // Undo/Redo functions
-  const undo = () => {
-    if (historyIndex > 0) {
-      setHistoryIndex(historyIndex - 1);
-      const previousState = history[historyIndex - 1];
-      setAdjustments(previousState.adjustments);
-      setZoom(previousState.zoom);
-      setActiveFilter(previousState.activeFilter);
-    }
-  };
-
-  const redo = () => {
-    if (historyIndex < history.length - 1) {
-      setHistoryIndex(historyIndex + 1);
-      const nextState = history[historyIndex + 1];
-      setAdjustments(nextState.adjustments);
-      setZoom(nextState.zoom);
-      setActiveFilter(nextState.activeFilter);
-    }
-  };
-
-  // High-quality image processing with advanced filters
+  // Apply edits to canvas
   const applyEdits = useCallback(() => {
     if (!canvasRef.current || !imageRef.current) return;
 
     const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d', { 
-      alpha: false,
-      antialias: true,
-      willReadFrequently: false 
-    });
+    const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     const img = imageRef.current;
-    const width = img.width;
-    const height = img.height;
+    
+    // Wait for image to be fully loaded
+    if (!img.complete || img.naturalWidth === 0) return;
+    
+    const width = img.naturalWidth;
+    const height = img.naturalHeight;
 
-    // Set canvas dimensions based on zoom with high quality
+    // Set canvas dimensions based on zoom
     canvas.width = width * (zoom / 100);
     canvas.height = height * (zoom / 100);
     
@@ -91,24 +67,24 @@ const BusinessPhotoEditor = () => {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
 
-    // Advanced filter string with additional effects
-    const filterString = `
-      brightness(${adjustments.brightness}%)
-      contrast(${adjustments.contrast}%)
-      saturate(${adjustments.saturation}%)
-      blur(${adjustments.blur}px)
-      sepia(${adjustments.sepia}%)
-      grayscale(${adjustments.grayscale}%)
-      hue-rotate(${adjustments.hueRotate}deg)
-      invert(${adjustments.invert}%)
-    `;
-
-    ctx.filter = filterString.trim();
+    // Build filter string
+    const filterParts = [];
+    if (adjustments.brightness !== 100) filterParts.push(`brightness(${adjustments.brightness}%)`);
+    if (adjustments.contrast !== 100) filterParts.push(`contrast(${adjustments.contrast}%)`);
+    if (adjustments.saturation !== 100) filterParts.push(`saturate(${adjustments.saturation}%)`);
+    if (adjustments.blur > 0) filterParts.push(`blur(${adjustments.blur}px)`);
+    if (adjustments.sepia > 0) filterParts.push(`sepia(${adjustments.sepia}%)`);
+    if (adjustments.grayscale > 0) filterParts.push(`grayscale(${adjustments.grayscale}%)`);
+    if (adjustments.hueRotate !== 0) filterParts.push(`hue-rotate(${adjustments.hueRotate}deg)`);
+    if (adjustments.invert > 0) filterParts.push(`invert(${adjustments.invert}%)`);
+    
+    ctx.filter = filterParts.join(' ');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     
-    // Apply sharpening if needed (using canvas manipulation)
+    // Apply sharpening if needed
     if (adjustments.sharpen > 0) {
-      applySharpening(ctx, canvas.width, canvas.height, adjustments.sharpen);
+      applySharpening(ctx, canvas.width, canvas.height, adjustments.sharpen / 100);
     }
   }, [adjustments, zoom]);
 
@@ -116,14 +92,14 @@ const BusinessPhotoEditor = () => {
   const applySharpening = (ctx, width, height, intensity) => {
     const imageData = ctx.getImageData(0, 0, width, height);
     const data = imageData.data;
-    const sharpenMatrix = [
-      0, -1, 0,
-      -1, 4 + intensity, -1,
-      0, -1, 0
+    const kernel = [
+      0, -intensity, 0,
+      -intensity, 1 + (intensity * 4), -intensity,
+      0, -intensity, 0
     ];
     
-    const side = Math.round(Math.sqrt(sharpenMatrix.length));
-    const halfSide = Math.floor(side / 2);
+    const side = 3;
+    const halfSide = 1;
     const src = data.slice();
     const sw = width;
     const sh = height;
@@ -137,7 +113,7 @@ const BusinessPhotoEditor = () => {
             const scx = x + cx - halfSide;
             if (scy >= 0 && scy < sh && scx >= 0 && scx < sw) {
               const srcOffset = (scy * sw + scx) * 4;
-              const wt = sharpenMatrix[cy * side + cx];
+              const wt = kernel[cy * side + cx];
               r += src[srcOffset] * wt;
               g += src[srcOffset + 1] * wt;
               b += src[srcOffset + 2] * wt;
@@ -153,7 +129,7 @@ const BusinessPhotoEditor = () => {
     ctx.putImageData(imageData, 0, 0);
   };
 
-  // AI Upscaling using free API (you can replace with your own API key)
+  // AI Enhancement
   const enhanceWithAI = async () => {
     if (!image || isProcessing) return;
     
@@ -161,23 +137,18 @@ const BusinessPhotoEditor = () => {
     setProcessingMessage('Enhancing image quality with AI...');
     
     try {
-      // Method 1: Client-side upscaling using canvas (free, no API key needed)
       await clientSideUpscale();
-      
-      // Method 2: If you have an API key, uncomment below for better results
-      // await serverSideUpscale();
-      
     } catch (error) {
       console.error('AI Enhancement failed:', error);
-      setProcessingMessage('Enhancement failed, using client-side upscaling...');
-      await clientSideUpscale();
+      setProcessingMessage('Enhancement failed');
+      setTimeout(() => setProcessingMessage(''), 2000);
     } finally {
       setIsProcessing(false);
-      setProcessingMessage('');
+      setTimeout(() => setProcessingMessage(''), 1000);
     }
   };
 
-  // Client-side AI upscaling using Lanczos interpolation
+  // Client-side upscaling
   const clientSideUpscale = async () => {
     return new Promise((resolve) => {
       if (!imageRef.current) {
@@ -186,83 +157,31 @@ const BusinessPhotoEditor = () => {
       }
       
       const img = imageRef.current;
-      const scaleFactor = 2; // 2x upscale
-      const newWidth = img.width * scaleFactor;
-      const newHeight = img.height * scaleFactor;
+      const scaleFactor = 2;
+      const newWidth = img.naturalWidth * scaleFactor;
+      const newHeight = img.naturalHeight * scaleFactor;
       
       const offscreenCanvas = document.createElement('canvas');
       offscreenCanvas.width = newWidth;
       offscreenCanvas.height = newHeight;
-      const offscreenCtx = offscreenCanvas.getContext('2d', { 
-        alpha: false,
-        antialias: true 
-      });
+      const offscreenCtx = offscreenCanvas.getContext('2d');
       
-      // Enable high-quality scaling
       offscreenCtx.imageSmoothingEnabled = true;
       offscreenCtx.imageSmoothingQuality = 'high';
-      
-      // Draw and scale the image with enhanced quality
       offscreenCtx.drawImage(img, 0, 0, newWidth, newHeight);
       
-      // Apply additional sharpening for better quality
-      const imageData = offscreenCtx.getImageData(0, 0, newWidth, newHeight);
-      const data = imageData.data;
-      
-      // Simple unsharp mask for better clarity
-      for (let i = 0; i < data.length; i += 4) {
-        // Slight contrast enhancement
-        data[i] = Math.min(255, Math.max(0, data[i] * 1.05));     // Red
-        data[i+1] = Math.min(255, Math.max(0, data[i+1] * 1.05)); // Green
-        data[i+2] = Math.min(255, Math.max(0, data[i+2] * 1.05)); // Blue
-      }
-      
-      offscreenCtx.putImageData(imageData, 0, 0);
-      
-      // Set the upscaled image
       const upscaledDataUrl = offscreenCanvas.toDataURL('image/jpeg', 0.95);
       const upscaledImg = new Image();
       upscaledImg.onload = () => {
         imageRef.current = upscaledImg;
         setImage(upscaledDataUrl);
         setOriginalImage(upscaledDataUrl);
-        saveToHistory({ adjustments, zoom, activeFilter });
         applyEdits();
         setProcessingMessage('Image enhanced successfully!');
-        setTimeout(() => setProcessingMessage(''), 2000);
         resolve();
       };
       upscaledImg.src = upscaledDataUrl;
     });
-  };
-
-  // Server-side AI upscaling (requires API key - example with free API)
-  const serverSideUpscale = async () => {
-    // Note: This is a placeholder. You'll need to sign up for a free API key
-    // from services like DeepAI, Clipdrop, or Replicate
-    
-    const formData = new FormData();
-    const response = await fetch(image);
-    const blob = await response.blob();
-    formData.append('image', blob);
-    
-    // Example with DeepAI (free tier available)
-    // Sign up at https://deepai.org/ to get your API key
-    const DEEP_AI_API_KEY = 'YOUR_FREE_API_KEY_HERE'; // Replace with your key
-    
-    const aiResponse = await fetch('https://api.deepai.org/api/torch-srgan', {
-      method: 'POST',
-      headers: {
-        'api-key': DEEP_AI_API_KEY,
-      },
-      body: formData
-    });
-    
-    const aiData = await aiResponse.json();
-    if (aiData.output_url) {
-      setImage(aiData.output_url);
-      setOriginalImage(aiData.output_url);
-    }
   };
 
   const handleImageUpload = (e) => {
@@ -282,7 +201,9 @@ const BusinessPhotoEditor = () => {
         setImage(imgData);
         setOriginalImage(imgData);
         resetAdjustments();
-        saveToHistory({ adjustments: { ...adjustments }, zoom, activeFilter });
+        saveToHistory(adjustments, zoom, activeFilter);
+        // Force canvas update
+        setTimeout(() => applyEdits(), 100);
       };
       img.src = imgData;
     };
@@ -318,8 +239,6 @@ const BusinessPhotoEditor = () => {
       hueRotate: 0,
       invert: 0,
       sharpen: 0,
-      exposure: 0,
-      temperature: 0,
     });
     setActiveFilter('none');
     setZoom(100);
@@ -332,6 +251,13 @@ const BusinessPhotoEditor = () => {
     });
   };
 
+  // Trigger applyEdits when adjustments change
+  useEffect(() => {
+    if (imageRef.current) {
+      applyEdits();
+    }
+  }, [adjustments, zoom, applyEdits]);
+
   const applyQuickFilter = (filter) => {
     setActiveFilter(filter);
     switch (filter) {
@@ -339,7 +265,7 @@ const BusinessPhotoEditor = () => {
         setAdjustments((prev) => ({ ...prev, grayscale: 100, saturation: 0 }));
         break;
       case 'sepia':
-        setAdjustments((prev) => ({ ...prev, sepia: 70, saturation: 50 }));
+        setAdjustments((prev) => ({ ...prev, sepia: 70, saturation: 80 }));
         break;
       case 'blur':
         setAdjustments((prev) => ({ ...prev, blur: 4 }));
@@ -348,19 +274,13 @@ const BusinessPhotoEditor = () => {
         setAdjustments((prev) => ({ ...prev, brightness: 130, contrast: 115 }));
         break;
       case 'contrast':
-        setAdjustments((prev) => ({ ...prev, contrast: 160, brightness: 105 }));
+        setAdjustments((prev) => ({ ...prev, contrast: 150, brightness: 105 }));
         break;
       case 'vintage':
-        setAdjustments((prev) => ({ ...prev, sepia: 40, saturation: 80, brightness: 105 }));
+        setAdjustments((prev) => ({ ...prev, sepia: 40, saturation: 85, brightness: 105 }));
         break;
       case 'sharp':
-        setAdjustments((prev) => ({ ...prev, sharpen: 50, contrast: 110 }));
-        break;
-      case 'warm':
-        setAdjustments((prev) => ({ ...prev, temperature: 20, saturation: 110 }));
-        break;
-      case 'cool':
-        setAdjustments((prev) => ({ ...prev, temperature: -20, saturation: 105 }));
+        setAdjustments((prev) => ({ ...prev, sharpen: 60, contrast: 110 }));
         break;
       default:
         resetAdjustments();
@@ -377,18 +297,31 @@ const BusinessPhotoEditor = () => {
   };
 
   const downloadHighQuality = () => {
-    if (!canvasRef.current) return;
-    // Create a high-quality export with max dimensions
-    const canvas = canvasRef.current;
+    if (!canvasRef.current || !imageRef.current) return;
+    
+    const img = imageRef.current;
     const tempCanvas = document.createElement('canvas');
     const ctx = tempCanvas.getContext('2d');
     
-    // Export at 2x resolution for print quality
-    tempCanvas.width = canvas.width * 2;
-    tempCanvas.height = canvas.height * 2;
+    // Export at original resolution or 2x
+    tempCanvas.width = img.naturalWidth;
+    tempCanvas.height = img.naturalHeight;
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(canvas, 0, 0, tempCanvas.width, tempCanvas.height);
+    
+    // Apply same filters to the high-quality export
+    const filterParts = [];
+    if (adjustments.brightness !== 100) filterParts.push(`brightness(${adjustments.brightness}%)`);
+    if (adjustments.contrast !== 100) filterParts.push(`contrast(${adjustments.contrast}%)`);
+    if (adjustments.saturation !== 100) filterParts.push(`saturate(${adjustments.saturation}%)`);
+    if (adjustments.blur > 0) filterParts.push(`blur(${adjustments.blur}px)`);
+    if (adjustments.sepia > 0) filterParts.push(`sepia(${adjustments.sepia}%)`);
+    if (adjustments.grayscale > 0) filterParts.push(`grayscale(${adjustments.grayscale}%)`);
+    if (adjustments.hueRotate !== 0) filterParts.push(`hue-rotate(${adjustments.hueRotate}deg)`);
+    if (adjustments.invert > 0) filterParts.push(`invert(${adjustments.invert}%)`);
+    
+    ctx.filter = filterParts.join(' ');
+    ctx.drawImage(img, 0, 0, tempCanvas.width, tempCanvas.height);
     
     const link = document.createElement('a');
     link.download = 'business-photo-high-quality.png';
@@ -403,7 +336,8 @@ const BusinessPhotoEditor = () => {
         imageRef.current = img;
         setImage(originalImage);
         resetAdjustments();
-        saveToHistory({ adjustments: { ...adjustments }, zoom, activeFilter });
+        saveToHistory(adjustments, zoom, activeFilter);
+        setTimeout(() => applyEdits(), 100);
       };
       img.src = originalImage;
     }
@@ -417,17 +351,17 @@ const BusinessPhotoEditor = () => {
     if (!showBeforeAfter || !containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
-    setMousePosition({ x, y: 0 });
+    setMousePosition({ x: Math.max(0, Math.min(x, rect.width)), y: 0 });
   };
 
   const AdjustmentSlider = ({ label, value, min, max, onChange, unit = '', icon = null }) => (
     <div className="mb-4">
-      <div className="flex justify-between text-sm text-gray-600 mb-1">
+      <div className="flex justify-between text-sm text-gray-300 mb-1">
         <div className="flex items-center gap-2">
           {icon && <span className="text-xs">{icon}</span>}
           <span>{label}</span>
         </div>
-        <span className="font-medium">{value}{unit}</span>
+        <span className="font-medium text-white">{value}{unit}</span>
       </div>
       <input
         type="range"
@@ -435,9 +369,9 @@ const BusinessPhotoEditor = () => {
         max={max}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+        className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
         style={{
-          background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(value - min) / (max - min) * 100}%, #e5e7eb ${(value - min) / (max - min) * 100}%, #e5e7eb 100%)`
+          background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((value - min) / (max - min)) * 100}%, #374151 ${((value - min) / (max - min)) * 100}%, #374151 100%)`
         }}
       />
     </div>
@@ -449,24 +383,13 @@ const BusinessPhotoEditor = () => {
       className={`px-3 py-2 rounded-lg text-sm font-medium transition-all transform hover:scale-105 ${
         isActive
           ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-md'
-          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+          : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
       }`}
     >
       <div className="flex items-center gap-2 justify-center">
         {icon && <span>{icon}</span>}
         <span>{label}</span>
       </div>
-    </button>
-  );
-
-  const AspectRatioButton = ({ ratio, label, isActive }) => (
-    <button
-      onClick={() => setSelectedRatio(ratio)}
-      className={`px-3 py-1 rounded text-sm transition ${
-        isActive ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-      }`}
-    >
-      {label}
     </button>
   );
 
@@ -487,10 +410,10 @@ const BusinessPhotoEditor = () => {
         {/* Processing Overlay */}
         {isProcessing && (
           <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 backdrop-blur-sm">
-            <div className="bg-white rounded-2xl p-8 text-center">
-              <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
-              <p className="text-gray-800 font-semibold">{processingMessage}</p>
-              <p className="text-gray-500 text-sm mt-2">This may take a few moments...</p>
+            <div className="bg-gray-800 rounded-2xl p-8 text-center border border-gray-700">
+              <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-500 mx-auto mb-4"></div>
+              <p className="text-white font-semibold">{processingMessage}</p>
+              <p className="text-gray-400 text-sm mt-2">This may take a few moments...</p>
             </div>
           </div>
         )}
@@ -498,7 +421,7 @@ const BusinessPhotoEditor = () => {
         {/* Main Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Left Panel - Adjustments */}
-          <div className="lg:col-span-3 bg-white/10 backdrop-blur-lg rounded-2xl shadow-2xl p-4 h-fit sticky top-4 border border-white/20">
+          <div className="lg:col-span-3 bg-gray-800/50 backdrop-blur-lg rounded-2xl shadow-2xl p-4 h-fit sticky top-4 border border-gray-700">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-lg font-semibold text-white flex items-center gap-2">
                 <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -508,7 +431,15 @@ const BusinessPhotoEditor = () => {
               </h2>
               <div className="flex gap-2">
                 <button
-                  onClick={undo}
+                  onClick={() => {
+                    if (historyIndex > 0) {
+                      const prevState = history[historyIndex - 1];
+                      setHistoryIndex(historyIndex - 1);
+                      setAdjustments(prevState.adjustments);
+                      setZoom(prevState.zoom);
+                      setActiveFilter(prevState.activeFilter);
+                    }
+                  }}
                   disabled={historyIndex <= 0}
                   className="p-1 rounded bg-gray-700 text-white disabled:opacity-50 hover:bg-gray-600 transition"
                   title="Undo"
@@ -518,7 +449,15 @@ const BusinessPhotoEditor = () => {
                   </svg>
                 </button>
                 <button
-                  onClick={redo}
+                  onClick={() => {
+                    if (historyIndex < history.length - 1) {
+                      const nextState = history[historyIndex + 1];
+                      setHistoryIndex(historyIndex + 1);
+                      setAdjustments(nextState.adjustments);
+                      setZoom(nextState.zoom);
+                      setActiveFilter(nextState.activeFilter);
+                    }
+                  }}
                   disabled={historyIndex >= history.length - 1}
                   className="p-1 rounded bg-gray-700 text-white disabled:opacity-50 hover:bg-gray-600 transition"
                   title="Redo"
@@ -530,7 +469,7 @@ const BusinessPhotoEditor = () => {
               </div>
             </div>
             
-            <div className="max-h-[70vh] overflow-y-auto pr-2 custom-scrollbar">
+            <div className="max-h-[70vh] overflow-y-auto pr-2" style={{ scrollbarWidth: 'thin' }}>
               <AdjustmentSlider
                 label="Brightness"
                 value={adjustments.brightness}
@@ -595,7 +534,7 @@ const BusinessPhotoEditor = () => {
                 icon="🌈"
               />
 
-              <hr className="my-4 border-white/20" />
+              <hr className="my-4 border-gray-700" />
 
               <h3 className="text-sm font-semibold text-white mb-3">Quick Filters</h3>
               <div className="grid grid-cols-2 gap-2 mb-4">
@@ -604,12 +543,12 @@ const BusinessPhotoEditor = () => {
                 <QuickFilterButton filter="sepia" label="Sepia" isActive={activeFilter === 'sepia'} icon="📜" />
                 <QuickFilterButton filter="vintage" label="Vintage" isActive={activeFilter === 'vintage'} icon="📷" />
                 <QuickFilterButton filter="sharp" label="Sharp" isActive={activeFilter === 'sharp'} icon="✨" />
-                <QuickFilterButton filter="warm" label="Warm" isActive={activeFilter === 'warm'} icon="🔥" />
-                <QuickFilterButton filter="cool" label="Cool" isActive={activeFilter === 'cool'} icon="❄️" />
                 <QuickFilterButton filter="brightness" label="Bright" isActive={activeFilter === 'brightness'} icon="💡" />
+                <QuickFilterButton filter="contrast" label="High Contrast" isActive={activeFilter === 'contrast'} icon="🎚️" />
+                <QuickFilterButton filter="blur" label="Soft Blur" isActive={activeFilter === 'blur'} icon="🌸" />
               </div>
 
-              <hr className="my-4 border-white/20" />
+              <hr className="my-4 border-gray-700" />
 
               <div className="space-y-3">
                 <div>
@@ -630,7 +569,7 @@ const BusinessPhotoEditor = () => {
                   className={`w-full py-2 rounded-lg font-medium transition transform hover:scale-105 flex items-center justify-center gap-2 ${
                     image && !isProcessing 
                       ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg' 
-                      : 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                      : 'bg-gray-700 text-gray-500 cursor-not-allowed'
                   }`}
                 >
                   <span>✨</span>
@@ -655,28 +594,28 @@ const BusinessPhotoEditor = () => {
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onMouseMove={handleMouseMove}
-              className={`bg-white/10 backdrop-blur-lg rounded-2xl shadow-2xl p-4 min-h-[600px] flex items-center justify-center transition-all relative ${
-                isDragging ? 'border-4 border-dashed border-blue-400 bg-blue-500/20' : 'border-2 border-dashed border-white/20'
+              className={`bg-gray-800/50 backdrop-blur-lg rounded-2xl shadow-2xl p-4 min-h-[600px] flex items-center justify-center transition-all relative ${
+                isDragging ? 'border-4 border-dashed border-blue-400 bg-blue-500/20' : 'border-2 border-dashed border-gray-700'
               }`}
             >
               {image ? (
                 <div className="relative overflow-auto max-h-[70vh] flex justify-center items-center">
-                  <div className="relative">
+                  <div className="relative" style={{ position: 'relative' }}>
                     <canvas
                       ref={canvasRef}
                       className="max-w-full h-auto shadow-2xl rounded-lg"
-                      style={{ maxWidth: '100%', height: 'auto' }}
+                      style={{ maxWidth: '100%', height: 'auto', display: 'block' }}
                     />
                     {showBeforeAfter && originalImage && (
                       <div 
-                        className="absolute top-0 left-0 overflow-hidden"
+                        className="absolute top-0 left-0 overflow-hidden rounded-lg"
                         style={{ width: `${mousePosition.x}px`, height: '100%' }}
                       >
                         <img 
                           src={originalImage} 
                           alt="Original" 
-                          className="max-w-full h-auto rounded-lg"
-                          style={{ maxWidth: '100%', height: 'auto' }}
+                          className="rounded-lg"
+                          style={{ maxWidth: '100%', height: 'auto', minWidth: '100%' }}
                         />
                       </div>
                     )}
@@ -684,10 +623,10 @@ const BusinessPhotoEditor = () => {
                 </div>
               ) : (
                 <div className="text-center p-8 cursor-pointer" onClick={() => fileInputRef.current?.click()}>
-                  <svg className="w-24 h-24 mx-auto text-gray-500 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-24 h-24 mx-auto text-gray-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                   </svg>
-                  <p className="text-gray-300 mb-2 text-lg">Drag & drop your image here</p>
+                  <p className="text-gray-400 mb-2 text-lg">Drag & drop your image here</p>
                   <p className="text-gray-500 text-sm mb-4">Supports JPG, PNG, WEBP (Max 50MB)</p>
                   <button className="px-6 py-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:shadow-lg transition transform hover:scale-105">
                     Select Image
@@ -709,7 +648,7 @@ const BusinessPhotoEditor = () => {
                 <button
                   onClick={toggleBeforeAfter}
                   className={`px-4 py-2 rounded-lg font-medium transition flex items-center gap-2 ${
-                    showBeforeAfter ? 'bg-blue-600 text-white' : 'bg-white/10 text-white hover:bg-white/20'
+                    showBeforeAfter ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
                   }`}
                 >
                   <span>🔄</span>
@@ -717,7 +656,7 @@ const BusinessPhotoEditor = () => {
                 </button>
                 <button
                   onClick={() => setZoom(100)}
-                  className="px-4 py-2 bg-white/10 text-white rounded-lg hover:bg-white/20 transition flex items-center gap-2"
+                  className="px-4 py-2 bg-gray-800 text-gray-300 rounded-lg hover:bg-gray-700 transition flex items-center gap-2"
                 >
                   <span>🔍</span>
                   <span>Reset Zoom</span>
@@ -727,7 +666,7 @@ const BusinessPhotoEditor = () => {
           </div>
 
           {/* Right Panel - Actions & Info */}
-          <div className="lg:col-span-3 bg-white/10 backdrop-blur-lg rounded-2xl shadow-2xl p-4 h-fit sticky top-4 border border-white/20">
+          <div className="lg:col-span-3 bg-gray-800/50 backdrop-blur-lg rounded-2xl shadow-2xl p-4 h-fit sticky top-4 border border-gray-700">
             <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
               <svg className="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
@@ -739,11 +678,11 @@ const BusinessPhotoEditor = () => {
               onClick={downloadImage}
               disabled={!image}
               className={`w-full py-3 rounded-lg font-semibold transition mb-3 flex items-center justify-center gap-2 transform hover:scale-105 ${
-                image ? 'bg-gradient-to-r from-green-600 to-emerald-600 text-white shadow-lg' : 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                image ? 'bg-gradient-to-r from-green-600 to-emerald-600 text-white shadow-lg' : 'bg-gray-700 text-gray-500 cursor-not-allowed'
               }`}
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4-4m0 0L8 8m4-4v12" />
               </svg>
               Download Standard
             </button>
@@ -752,16 +691,16 @@ const BusinessPhotoEditor = () => {
               onClick={downloadHighQuality}
               disabled={!image}
               className={`w-full py-3 rounded-lg font-semibold transition mb-4 flex items-center justify-center gap-2 transform hover:scale-105 ${
-                image ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg' : 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                image ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg' : 'bg-gray-700 text-gray-500 cursor-not-allowed'
               }`}
             >
               <span>⭐</span>
-              <span>Download High Quality (2x)</span>
+              <span>Download High Quality</span>
             </button>
 
-            <div className="bg-white/5 rounded-xl p-4 mb-4">
+            <div className="bg-gray-900/50 rounded-xl p-4 mb-4">
               <h3 className="text-sm font-semibold text-white mb-2">💡 Pro Tips for Business Photos</h3>
-              <ul className="text-xs text-gray-300 space-y-2">
+              <ul className="text-xs text-gray-400 space-y-2">
                 <li className="flex items-start gap-2">
                   <span className="text-blue-400">✓</span>
                   <span>Use AI Enhance for product images to show details</span>
@@ -776,39 +715,18 @@ const BusinessPhotoEditor = () => {
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-blue-400">✓</span>
-                  <span>Warm filter works great for team photos</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="text-blue-400">✓</span>
                   <span>Export in High Quality for print materials</span>
                 </li>
               </ul>
             </div>
 
-            <div className="text-center text-xs text-gray-500 pt-4 border-t border-white/10">
+            <div className="text-center text-xs text-gray-500 pt-4 border-t border-gray-700">
               <p>Professional Photo Editor v2.0</p>
               <p className="mt-1">✨ AI-Enhanced | High Quality Output</p>
             </div>
           </div>
         </div>
       </div>
-
-      <style jsx>{`
-        .custom-scrollbar::-webkit-scrollbar {
-          width: 6px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-          background: rgba(255, 255, 255, 0.1);
-          border-radius: 10px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: rgba(255, 255, 255, 0.3);
-          border-radius: 10px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: rgba(255, 255, 255, 0.5);
-        }
-      `}</style>
     </div>
   );
 };
