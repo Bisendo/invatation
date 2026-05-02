@@ -1,326 +1,392 @@
-import React, { useState, useRef } from 'react';
-import html2canvas from 'html2canvas';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 
-const BieStoreInvitation = () => {
-  const [inviteeName, setInviteeName] = useState('EDGAR NYABAGAKA');
-  const [inviteeImage, setInviteeImage] = useState(null);
-  const [imagePreview, setImagePreview] = useState(null);
-  const [selectedStyle, setSelectedStyle] = useState(0);
-  const [isDownloading, setIsDownloading] = useState(false);
-  const posterRef = useRef(null);
+const BusinessPhotoEditor = () => {
+  const [image, setImage] = useState(null);
+  const [originalImage, setOriginalImage] = useState(null);
+  const [activeFilter, setActiveFilter] = useState('none');
+  const [adjustments, setAdjustments] = useState({
+    brightness: 100,
+    contrast: 100,
+    saturation: 100,
+    blur: 0,
+    sepia: 0,
+    grayscale: 0,
+    hueRotate: 0,
+    invert: 0,
+  });
+  const [isDragging, setIsDragging] = useState(false);
+  const [zoom, setZoom] = useState(100);
+  const [cropMode, setCropMode] = useState(false);
+  const [cropArea, setCropArea] = useState({ x: 0, y: 0, width: 0, height: 0 });
+  const canvasRef = useRef(null);
+  const imageRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  // Handle image upload
+  // Apply filters and adjustments to canvas
+  const applyEdits = useCallback(() => {
+    if (!canvasRef.current || !imageRef.current) return;
+
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const img = imageRef.current;
+    const width = img.width;
+    const height = img.height;
+
+    // Set canvas dimensions based on zoom
+    canvas.width = width * (zoom / 100);
+    canvas.height = height * (zoom / 100);
+
+    // Apply CSS filters for real-time preview
+    const filterString = `
+      brightness(${adjustments.brightness}%)
+      contrast(${adjustments.contrast}%)
+      saturate(${adjustments.saturation}%)
+      blur(${adjustments.blur}px)
+      sepia(${adjustments.sepia}%)
+      grayscale(${adjustments.grayscale}%)
+      hue-rotate(${adjustments.hueRotate}deg)
+      invert(${adjustments.invert}%)
+    `;
+
+    ctx.filter = filterString.trim();
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  }, [adjustments, zoom]);
+
+  useEffect(() => {
+    if (image) {
+      const img = new Image();
+      img.src = image;
+      img.onload = () => {
+        imageRef.current = img;
+        applyEdits();
+      };
+    }
+  }, [image, applyEdits]);
+
+  useEffect(() => {
+    if (imageRef.current) {
+      applyEdits();
+    }
+  }, [adjustments, zoom, applyEdits]);
+
   const handleImageUpload = (e) => {
-    const file = e.target.files[0];
-    if (file && (file.type === 'image/jpeg' || file.type === 'image/png' || file.type === 'image/jpg')) {
+    const file = e.target.files?.[0];
+    if (file) {
       const reader = new FileReader();
       reader.onload = (event) => {
-        setInviteeImage(event.target.result);
-        setImagePreview(event.target.result);
+        const imgData = event.target?.result;
+        setImage(imgData);
+        setOriginalImage(imgData);
+        resetAdjustments();
       };
       reader.readAsDataURL(file);
-    } else {
-      alert('Please upload a valid image (JPEG/PNG)');
     }
   };
 
-  // Download poster as image
-  const downloadPoster = async () => {
-    if (!posterRef.current) return;
-    
-    setIsDownloading(true);
-    try {
-      const canvas = await html2canvas(posterRef.current, {
-        scale: 3,
-        backgroundColor: null,
-        logging: false,
-        useCORS: true,
-      });
-      
-      const link = document.createElement('a');
-      link.download = 'bie-store-invitation.png';
-      link.href = canvas.toDataURL('image/png');
-      link.click();
-    } catch (error) {
-      console.error('Error generating poster:', error);
-      alert('Failed to generate poster. Please try again.');
-    } finally {
-      setIsDownloading(false);
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file && file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const imgData = event.target?.result;
+        setImage(imgData);
+        setOriginalImage(imgData);
+        resetAdjustments();
+      };
+      reader.readAsDataURL(file);
     }
   };
 
-  // Reset image
-  const resetImage = () => {
-    setInviteeImage(null);
-    setImagePreview(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const resetAdjustments = () => {
+    setAdjustments({
+      brightness: 100,
+      contrast: 100,
+      saturation: 100,
+      blur: 0,
+      sepia: 0,
+      grayscale: 0,
+      hueRotate: 0,
+      invert: 0,
+    });
+    setActiveFilter('none');
+    setZoom(100);
+  };
+
+  const handleAdjustmentChange = (key, value) => {
+    setAdjustments((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const applyQuickFilter = (filter) => {
+    setActiveFilter(filter);
+    switch (filter) {
+      case 'grayscale':
+        setAdjustments((prev) => ({ ...prev, grayscale: 100, saturation: 0 }));
+        break;
+      case 'sepia':
+        setAdjustments((prev) => ({ ...prev, sepia: 100, saturation: 70 }));
+        break;
+      case 'blur':
+        setAdjustments((prev) => ({ ...prev, blur: 5 }));
+        break;
+      case 'brightness':
+        setAdjustments((prev) => ({ ...prev, brightness: 140 }));
+        break;
+      case 'contrast':
+        setAdjustments((prev) => ({ ...prev, contrast: 150 }));
+        break;
+      case 'hue-rotate':
+        setAdjustments((prev) => ({ ...prev, hueRotate: 180 }));
+        break;
+      case 'invert':
+        setAdjustments((prev) => ({ ...prev, invert: 100 }));
+        break;
+      default:
+        resetAdjustments();
+        break;
     }
   };
 
-  // Style definitions
-  const styles = [
-    { name: 'Luxury Gold', bg: 'bg-gradient-to-br from-yellow-900 via-amber-800 to-yellow-900', textColor: 'text-amber-100', accent: 'border-amber-400', button: 'bg-amber-500' },
-    { name: 'Elegant Rose', bg: 'bg-gradient-to-br from-rose-900 via-pink-800 to-rose-900', textColor: 'text-pink-100', accent: 'border-pink-400', button: 'bg-pink-500' },
-    { name: 'Midnight Blue', bg: 'bg-gradient-to-br from-blue-900 via-indigo-900 to-purple-900', textColor: 'text-blue-100', accent: 'border-blue-400', button: 'bg-blue-500' },
-    { name: 'Emerald Green', bg: 'bg-gradient-to-br from-emerald-900 via-green-800 to-teal-900', textColor: 'text-emerald-100', accent: 'border-emerald-400', button: 'bg-emerald-500' },
-    { name: 'Royal Purple', bg: 'bg-gradient-to-br from-purple-900 via-violet-800 to-fuchsia-900', textColor: 'text-purple-100', accent: 'border-purple-400', button: 'bg-purple-500' },
-    { name: 'Sunset Orange', bg: 'bg-gradient-to-br from-orange-800 via-red-700 to-pink-800', textColor: 'text-orange-100', accent: 'border-orange-400', button: 'bg-orange-500' },
-    { name: 'Ocean Teal', bg: 'bg-gradient-to-br from-teal-900 via-cyan-800 to-blue-900', textColor: 'text-teal-100', accent: 'border-teal-400', button: 'bg-teal-500' },
-    { name: 'Classic Black', bg: 'bg-gradient-to-br from-gray-900 via-gray-800 to-black', textColor: 'text-gray-100', accent: 'border-gray-400', button: 'bg-gray-600' },
-    { name: 'Vintage Wine', bg: 'bg-gradient-to-br from-red-900 via-maroon-800 to-rose-900', textColor: 'text-red-100', accent: 'border-red-400', button: 'bg-red-500' },
-    { name: 'Sapphire Blue', bg: 'bg-gradient-to-br from-sky-900 via-blue-800 to-indigo-900', textColor: 'text-sky-100', accent: 'border-sky-400', button: 'bg-sky-500' },
-    { name: 'Champagne', bg: 'bg-gradient-to-br from-amber-200 via-yellow-100 to-orange-200', textColor: 'text-amber-900', accent: 'border-amber-600', button: 'bg-amber-600' },
-    { name: 'Modern White', bg: 'bg-gradient-to-br from-gray-50 via-white to-gray-100', textColor: 'text-gray-800', accent: 'border-gray-800', button: 'bg-gray-800' }
-  ];
+  const downloadImage = () => {
+    if (!canvasRef.current) return;
+    const link = document.createElement('a');
+    link.download = 'edited-photo.png';
+    link.href = canvasRef.current.toDataURL();
+    link.click();
+  };
 
-  const currentStyle = styles[selectedStyle];
+  const resetToOriginal = () => {
+    if (originalImage) {
+      setImage(originalImage);
+      resetAdjustments();
+    }
+  };
 
-  // Render poster based on selected style
-  const renderPoster = () => {
-    const style = currentStyle;
-    
-    return (
-      <div className={`relative w-[600px] min-h-[00px] ${style.bg}  shadow-2xl overflow-hidden`}>
-        {/* Decorative Elements */}
-        <div className="absolute top-0 left-0 w-full h-full opacity-10">
-          <div className="absolute top-10 left-10 w-32 h-32 border-2 rounded-full"></div>
-          <div className="absolute bottom-10 right-10 w-48 h-48 border-2 rounded-full"></div>
-          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-64 h-64 border-2 rounded-full"></div>
+  const AdjustmentSlider = ({ label, value, min, max, onChange, unit = '' }) => (
+    <div className="mb-4">
+      <div className="flex justify-between text-sm text-gray-600 mb-1">
+        <span>{label}</span>
+        <span>{value}{unit}</span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+      />
+    </div>
+  );
+
+  const QuickFilterButton = ({ filter, label, isActive }) => (
+    <button
+      onClick={() => applyQuickFilter(filter)}
+      className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+        isActive
+          ? 'bg-blue-600 text-white shadow-md'
+          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+      }`}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 p-4 md:p-6 font-sans">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="text-center mb-6">
+          <h1 className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+            Business Photo Editor
+          </h1>
+          <p className="text-gray-500 mt-2">Professional editing tools for your business images</p>
         </div>
-        
-        {/* Main Content */}
-        <div className="relative z-10 p-6 flex flex-col h-full">
-          {/* BIE STORE Logo */}
-          <div className="text-center mb-4">
-            <div className={`text-xs tracking-[0.3em] ${style.textColor} opacity-80`}>BIE_STORE</div>
-            <h1 className={`text-4xl font-bold mt-1 ${style.textColor}`}>BIE STORE</h1>
-          </div>
-          
-          {/* LAUNCH Badge */}
-          <div className="text-center my-3">
-            <div className={`inline-block border-2 ${style.accent} ${style.textColor} px-6 py-2 font-bold text-lg tracking-wider`}>
-              BIE STORE LAUNCH
+
+        {/* Main Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+          {/* Left Panel - Adjustments */}
+          <div className="lg:col-span-1 bg-white rounded-2xl shadow-lg p-4 h-fit sticky top-4">
+            <h2 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+              <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+              </svg>
+              Adjustments
+            </h2>
+            
+            <AdjustmentSlider
+              label="Brightness"
+              value={adjustments.brightness}
+              min={0}
+              max={200}
+              onChange={(v) => handleAdjustmentChange('brightness', v)}
+              unit="%"
+            />
+            <AdjustmentSlider
+              label="Contrast"
+              value={adjustments.contrast}
+              min={0}
+              max={200}
+              onChange={(v) => handleAdjustmentChange('contrast', v)}
+              unit="%"
+            />
+            <AdjustmentSlider
+              label="Saturation"
+              value={adjustments.saturation}
+              min={0}
+              max={200}
+              onChange={(v) => handleAdjustmentChange('saturation', v)}
+              unit="%"
+            />
+            <AdjustmentSlider
+              label="Blur"
+              value={adjustments.blur}
+              min={0}
+              max={20}
+              onChange={(v) => handleAdjustmentChange('blur', v)}
+              unit="px"
+            />
+            <AdjustmentSlider
+              label="Sepia"
+              value={adjustments.sepia}
+              min={0}
+              max={100}
+              onChange={(v) => handleAdjustmentChange('sepia', v)}
+              unit="%"
+            />
+            <AdjustmentSlider
+              label="Hue Rotate"
+              value={adjustments.hueRotate}
+              min={0}
+              max={360}
+              onChange={(v) => handleAdjustmentChange('hueRotate', v)}
+              unit="°"
+            />
+
+            <hr className="my-4" />
+
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">Quick Filters</h3>
+            <div className="grid grid-cols-2 gap-2 mb-4">
+              <QuickFilterButton filter="none" label="Original" isActive={activeFilter === 'none'} />
+              <QuickFilterButton filter="grayscale" label="Grayscale" isActive={activeFilter === 'grayscale'} />
+              <QuickFilterButton filter="sepia" label="Sepia" isActive={activeFilter === 'sepia'} />
+              <QuickFilterButton filter="blur" label="Blur" isActive={activeFilter === 'blur'} />
+              <QuickFilterButton filter="brightness" label="Bright" isActive={activeFilter === 'brightness'} />
+              <QuickFilterButton filter="contrast" label="High Contrast" isActive={activeFilter === 'contrast'} />
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-sm text-gray-600 mb-1 block">Zoom: {zoom}%</label>
+                <input
+                  type="range"
+                  min={25}
+                  max={200}
+                  value={zoom}
+                  onChange={(e) => setZoom(Number(e.target.value))}
+                  className="w-full h-2 bg-gray-200 rounded-lg"
+                />
+              </div>
+              <button
+                onClick={resetToOriginal}
+                className="w-full py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition font-medium"
+              >
+                Reset All
+              </button>
             </div>
           </div>
-          
-          {/* Tagline */}
-          <div className="text-center mb-4">
-            <div className={`flex justify-center gap-4 text-xs font-semibold ${style.textColor} uppercase tracking-wider`}>
-              <span>✦ CONNECTION</span>
-              <span>✦ CAKE</span>
-              <span>✦ FASHION</span>
-            </div>
-          </div>
-          
-          {/* Large Image Box */}
-          <div className="mb-5 flex justify-center">
-            <div className="w-56 h-56 rounded-full overflow-hidden border-4 border-white shadow-2xl">
-              {inviteeImage ? (
-                <img src={inviteeImage} alt="Invitee" className="w-full h-full object-cover" />
+
+          {/* Center - Canvas Area */}
+          <div className="lg:col-span-2">
+            <div
+              onDrop={handleDrop}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              className={`bg-white rounded-2xl shadow-lg p-4 min-h-[500px] flex items-center justify-center transition-all ${
+                isDragging ? 'border-4 border-dashed border-blue-400 bg-blue-50' : 'border-2 border-dashed border-gray-200'
+              }`}
+            >
+              {image ? (
+                <div className="relative overflow-auto max-h-[70vh] flex justify-center items-center">
+                  <canvas
+                    ref={canvasRef}
+                    className="max-w-full h-auto shadow-md rounded-lg"
+                    style={{ maxWidth: '100%', height: 'auto' }}
+                  />
+                </div>
               ) : (
-                <div className="w-full h-full bg-white/20 flex items-center justify-center">
-                  <i className="fas fa-user text-6xl text-white/60"></i>
+                <div className="text-center p-8 cursor-pointer" onClick={() => fileInputRef.current?.click()}>
+                  <svg className="w-20 h-20 mx-auto text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  <p className="text-gray-500 mb-2">Drag & drop your image here</p>
+                  <p className="text-gray-400 text-sm mb-4">or click to browse</p>
+                  <button className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+                    Select Image
+                  </button>
                 </div>
               )}
             </div>
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleImageUpload}
+              accept="image/*"
+              className="hidden"
+            />
           </div>
-          
-          {/* Invitee Name */}
-          <div className="text-center mb-4">
-            <div className={`text-sm font-semibold ${style.textColor} opacity-80`}>MR/MRS</div>
-            <div className={`text-2xl font-bold mt-1 ${style.textColor}`}>
-              {inviteeName}
-            </div>
-          </div>
-          
-          {/* Date & Time */}
-          <div className="text-center mb-3">
-            <div className={`inline-flex items-center gap-2 px-4 py-2 bg-white/10 rounded-full ${style.textColor}`}>
-              <i className="fas fa-calendar-alt text-sm"></i>
-              <span className="font-semibold">SATURDAY, APRIL 4</span>
-              <i className="fas fa-clock text-sm"></i>
-              <span className="font-semibold">04 PM - 05 PM</span>
-            </div>
-          </div>
-          
-          {/* CEO Info */}
-          <div className={`text-center text-sm ${style.textColor} opacity-90 mb-2`}>
-            <p>CEO: BIDAUS KIMOTO BISENDO</p>
-          </div>
-          
-          {/* Contact & Social */}
-          <div className={`text-center text-xs ${style.textColor} opacity-80 space-y-1 mb-3`}>
-            <p>📞 0621690364</p>
-            <p>📱 @Bie_store</p>
-          </div>
-          
-          {/* Location */}
-          <div className={`text-center text-xs ${style.textColor} opacity-90 border-t border-white/20 pt-3 mt-auto`}>
-            <p>📍 MAKUMBUSHO, KENYA STREET, HOUSE NO 14</p>
-          </div>
-        </div>
-      </div>
-    );
-  };
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 py-8 px-4">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-white mb-2">BIE STORE</h1>
-          <p className="text-gray-300">Premium Invitation Poster Creator</p>
-          <p className="text-gray-400 text-sm mt-2">Choose from 12 stunning styles</p>
-        </div>
-
-        <div className="grid lg:grid-cols-3 gap-8">
-          {/* Left Panel - Controls */}
-          <div className="lg:col-span-1 bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-            <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
-              <i className="fas fa-magic text-yellow-400"></i>
-              Customize Your Invitation
+          {/* Right Panel - Actions & Info */}
+          <div className="lg:col-span-1 bg-white rounded-2xl shadow-lg p-4 h-fit sticky top-4">
+            <h2 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+              <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+              </svg>
+              Export
             </h2>
-            
-            {/* Image Upload */}
-            <div className="mb-6">
-              <label className="block text-white font-semibold mb-2">
-                <i className="fas fa-image mr-2 text-yellow-400"></i>
-                Upload Photo
-              </label>
-              <div 
-                onClick={() => fileInputRef.current.click()}
-                className="border-2 border-dashed border-white/30 rounded-xl p-4 text-center cursor-pointer hover:border-yellow-400 transition-colors bg-white/5"
-              >
-                {imagePreview ? (
-                  <div className="relative">
-                    <img 
-                      src={imagePreview} 
-                      alt="Preview" 
-                      className="w-full h-40 object-cover rounded-lg mx-auto"
-                    />
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        resetImage();
-                      }}
-                      className="absolute top-2 right-2 bg-red-500 text-white rounded-full w-8 h-8 flex items-center justify-center hover:bg-red-600"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ) : (
-                  <div className="py-8">
-                    <i className="fas fa-camera text-4xl text-white/50 mb-2"></i>
-                    <p className="text-white/70">Click to upload photo</p>
-                  </div>
-                )}
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/jpg"
-                  onChange={handleImageUpload}
-                  className="hidden"
-                />
-              </div>
-            </div>
-
-            {/* Name Input */}
-            <div className="mb-6">
-              <label className="block text-white font-semibold mb-2">
-                <i className="fas fa-user mr-2 text-yellow-400"></i>
-                Invitee Name
-              </label>
-              <input
-                type="text"
-                value={inviteeName}
-                onChange={(e) => setInviteeName(e.target.value.toUpperCase())}
-                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/50 focus:border-yellow-400 focus:outline-none transition-colors"
-                placeholder="Enter name"
-              />
-            </div>
-
-            {/* Style Selection */}
-            <div className="mb-6">
-              <label className="block text-white font-semibold mb-3">
-                <i className="fas fa-palette mr-2 text-yellow-400"></i>
-                Select Style ({selectedStyle + 1}/12)
-              </label>
-              <div className="grid grid-cols-3 gap-2">
-                {styles.map((style, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => setSelectedStyle(idx)}
-                    className={`p-2 rounded-lg text-xs font-semibold transition-all ${
-                      selectedStyle === idx 
-                        ? 'ring-2 ring-yellow-400 scale-105' 
-                        : 'opacity-70 hover:opacity-100'
-                    }`}
-                    style={{
-                      background: style.bg.includes('gradient') ? style.bg : '',
-                      backgroundColor: !style.bg.includes('gradient') ? style.bg.split(' ')[1] : '',
-                      color: style.textColor.includes('text-') ? '' : 'white'
-                    }}
-                  >
-                    {style.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Event Info */}
-            <div className="bg-white/5 rounded-lg p-4 mb-6 border border-white/10">
-              <h3 className="font-bold text-white mb-2 flex items-center gap-2">
-                <i className="fas fa-info-circle text-yellow-400"></i>
-                Event Details
-              </h3>
-              <div className="space-y-1 text-sm text-white/80">
-                <p>📅 Wednesday, April 4 | 04 PM - 05 PM</p>
-                <p>📍 MAKUMBUSHO, KENYA STREET, HOUSE NO 14</p>
-                <p>📞 0621690364</p>
-                <p>📱 @Bie_store</p>
-                <p>👑 CEO: BIDAUS KIMOTO BISENDO</p>
-              </div>
-            </div>
-
-            {/* Download Button */}
             <button
-              onClick={downloadPoster}
-              disabled={isDownloading}
-              className="w-full bg-gradient-to-r from-yellow-500 to-orange-500 text-white py-3 rounded-lg font-bold shadow-lg hover:shadow-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+              onClick={downloadImage}
+              disabled={!image}
+              className={`w-full py-3 rounded-lg font-semibold transition mb-4 flex items-center justify-center gap-2 ${
+                image ? 'bg-green-600 text-white hover:bg-green-700' : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+              }`}
             >
-              {isDownloading ? (
-                <>
-                  <i className="fas fa-spinner fa-spin"></i>
-                  Generating Poster...
-                </>
-              ) : (
-                <>
-                  <i className="fas fa-download"></i>
-                  Download Invitation Poster
-                </>
-              )}
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              Download Image
             </button>
-          </div>
 
-          {/* Right Panel - Poster Preview */}
-          <div className="lg:col-span-2 flex justify-center items-start">
-            <div ref={posterRef}>
-              {renderPoster()}
+            <div className="bg-gray-50 rounded-xl p-4 mb-4">
+              <h3 className="text-sm font-semibold text-gray-700 mb-2">Tips for Business Photos</h3>
+              <ul className="text-xs text-gray-500 space-y-1">
+                <li>✓ Increase contrast for product images</li>
+                <li>✓ Use slight blur for background focus</li>
+                <li>✓ Adjust brightness for team photos</li>
+                <li>✓ Apply light sepia for warm brand tone</li>
+              </ul>
+            </div>
+
+            <div className="text-center text-xs text-gray-400 pt-4 border-t">
+              Professional Photo Editor v1.0
             </div>
           </div>
-        </div>
-
-        {/* Style Guide */}
-        <div className="mt-8 text-center text-white/60 text-sm">
-          <p>✨ 12 Premium Styles Available • Click on any style to preview • Upload photo to personalize ✨</p>
         </div>
       </div>
     </div>
   );
 };
 
-export default BieStoreInvitation;
-
-
+export default BusinessPhotoEditor;
